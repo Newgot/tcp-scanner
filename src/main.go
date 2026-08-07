@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Newgot/tcp-scanner/internal/portscan"
+	portscan "github.com/Newgot/tcp-scanner"
 )
 
 func main() {
@@ -14,13 +14,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer scanner.Close()
+	defer func(scanner *portscan.Scanner) {
+		err := scanner.Close()
+		if err != nil {
+			panic(err)
+		}
+	}(scanner)
 
 	// Сканируем порты
 	results, err := scanner.Scan(
 		context.Background(),
 		[]string{"localhost"},
-		scanner.Range(1, 1000),
+		portscan.Range(1, 1000),
 	)
 	if err != nil {
 		log.Fatal(err)
