@@ -1,4 +1,3 @@
-// engine.go
 package portscan
 
 import (
@@ -42,14 +41,6 @@ func New(opts ...Option) (*Scanner, error) {
 	}, nil
 }
 
-func MustNew(opts ...Option) *Scanner {
-	s, err := New(opts...)
-	if err != nil {
-		panic(err)
-	}
-	return s
-}
-
 // Scan выполняет сканирование для указанных хостов и портов
 func (s *Scanner) Scan(ctx context.Context, hosts []string, ports []int) (<-chan Result, error) {
 	s.mu.RLock()
@@ -66,10 +57,23 @@ func (s *Scanner) Scan(ctx context.Context, hosts []string, ports []int) (<-chan
 		return nil, ErrNoPorts
 	}
 
+	// Валидация портов
 	for _, p := range ports {
 		if p < 1 || p > 65535 {
 			return nil, fmt.Errorf("%w: %d", ErrInvalidPort, p)
 		}
+	}
+
+	// Разрешаем хосты
+	hostsInfo, err := ValidateHosts(hosts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Получаем уникальные IP-адреса для сканирования
+	addresses := GetUniqueAddresses(hostsInfo)
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("no valid IP addresses to scan")
 	}
 
 	results := make(chan Result, s.config.Concurrency*2)
@@ -104,12 +108,12 @@ func (s *Scanner) Scan(ctx context.Context, hosts []string, ports []int) (<-chan
 	// Отправляем задачи
 	go func() {
 		defer close(tasks)
-		for _, host := range hosts {
+		for _, addr := range addresses {
 			for _, port := range ports {
 				select {
 				case <-ctx.Done():
 					return
-				case tasks <- task{host: host, port: port}:
+				case tasks <- task{host: addr, port: port}:
 				}
 			}
 		}
@@ -148,7 +152,12 @@ func (s *Scanner) scanPort(ctx context.Context, host string, port int) Result {
 	if err != nil {
 		return s.handleScanError(host, port, err)
 	}
-	defer conn.Close()
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			panic(err)
+		}
+	}(conn)
 
 	return Result{
 		Host:  host,
@@ -173,7 +182,7 @@ func (s *Scanner) handleScanError(host string, port int, err error) Result {
 
 	errStr := err.Error()
 	if strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "no route to host") ||
+		strings.Contains(errStr, "no route to hosts") ||
 		strings.Contains(errStr, "connection reset") {
 		return Result{
 			Host:  host,
