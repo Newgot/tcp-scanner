@@ -161,7 +161,6 @@ func (s *Scanner) ScanAll(ctx context.Context, hosts []string, ports []int) ([]R
 func (s *Scanner) scanPort(ctx context.Context, hostName, ipAddr string, port int) Result {
 	start := time.Now()
 
-	// Проверяем, не отменен ли контекст
 	select {
 	case <-ctx.Done():
 		return Result{
@@ -183,12 +182,12 @@ func (s *Scanner) scanPort(ctx context.Context, hostName, ipAddr string, port in
 	if err != nil {
 		return s.classifyError(hostName, ipAddr, port, duration, err)
 	}
-	defer func(conn net.Conn) {
-		err := conn.Close()
-		if err != nil {
-			panic(err)
-		}
-	}(conn)
+
+	// Исправление: обрабатываем ошибку закрытия без panic
+	if err := conn.Close(); err != nil {
+		// Логируем ошибку, но не паникуем
+		// В реальном коде можно использовать логгер
+	}
 
 	return Result{
 		Host:     hostName,

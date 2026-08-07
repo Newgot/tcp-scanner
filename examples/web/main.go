@@ -27,7 +27,6 @@ type ScanResponse struct {
 var scanner *portscan.Scanner
 
 func init() {
-	// Инициализируем сканер при старте
 	var err error
 	scanner, err = portscan.New(
 		portscan.WithConcurrency(100),
@@ -39,14 +38,12 @@ func init() {
 }
 
 func main() {
-	defer func(scanner *portscan.Scanner) {
-		err := scanner.Close()
-		if err != nil {
-			panic(err)
+	defer func() {
+		if err := scanner.Close(); err != nil {
+			log.Printf("Error closing scanner: %v", err)
 		}
-	}(scanner)
+	}()
 
-	// HTTP endpoints
 	http.HandleFunc("/scan", scanHandler)
 	http.HandleFunc("/health", healthHandler)
 	http.HandleFunc("/", indexHandler)
@@ -55,7 +52,9 @@ func main() {
 	fmt.Println("📡 Используйте POST /scan для сканирования")
 	fmt.Println("   Пример: curl -X POST http://localhost:8080/scan -d '{\"hosts\":[\"localhost\"],\"ports\":[80,443,8080]}'")
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func scanHandler(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +69,6 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Валидация
 	if len(req.Hosts) == 0 {
 		http.Error(w, "No hosts specified", http.StatusBadRequest)
 		return
@@ -80,7 +78,6 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Настройка таймаута
 	timeout := 30 * time.Second
 	if req.Timeout != "" {
 		if d, err := time.ParseDuration(req.Timeout); err == nil {
@@ -89,24 +86,20 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Выполняем сканирование
 	results, err := scanner.Scan(ctx, req.Hosts, req.Ports)
 	if err != nil {
 		http.Error(w, "Scan failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Собираем результаты
 	var allResults []portscan.Result
 	for result := range results {
 		allResults = append(allResults, result)
 	}
 
-	// Формируем ответ
 	response := ScanResponse{
 		Results: allResults,
 		Stats:   portscan.Stats(allResults),
@@ -115,15 +108,12 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to encode response: "+err.Error(), http.StatusInternalServerError)
-		return
 	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	// r используется для проверки метода, чтобы избежать warning
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -131,18 +121,15 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-
 	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status":  "ok",
 		"service": "port-scanner",
 	}); err != nil {
 		http.Error(w, "Failed to encode response: "+err.Error(), http.StatusInternalServerError)
-		return
 	}
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
-	// r используется для проверки метода, чтобы избежать warning
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -202,7 +189,6 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
-
 	if _, err := w.Write([]byte(html)); err != nil {
 		log.Printf("Failed to write response: %v", err)
 	}

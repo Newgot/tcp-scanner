@@ -210,21 +210,5 @@ go run examples/ports/main.go
 
 ## Требования
 
-- Go 1.19 или выше
+- Go 1.25 или выше
 - Стандартная библиотека (нет внешних зависимостей)
-
-## Лицензия
-
-MIT
-
-## Автор
-
-Newgot
-
-## Вклад в проект
-
-1. Fork репозитория
-2. Создайте ветку для фичи (git checkout -b feature/amazing-feature)
-3. Закоммитьте изменения (git commit -m 'Add amazing feature')
-4. Запушьте ветку (git push origin feature/amazing-feature)
-5. Откройте Pull Request

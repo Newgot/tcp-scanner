@@ -9,21 +9,18 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Базовое сканирование портов ===\n")
+	fmt.Println("=== Базовое сканирование портов ===")
 
-	// Создаем сканер с настройками по умолчанию
 	scanner, err := portscan.New()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func(scanner *portscan.Scanner) {
-		err := scanner.Close()
-		if err != nil {
-			panic(err)
+	defer func() {
+		if err := scanner.Close(); err != nil {
+			log.Printf("Error closing scanner: %v", err)
 		}
-	}(scanner)
+	}()
 
-	// Сканируем популярные порты
 	ports := []int{22, 80, 443, 3306, 5432, 6379, 8080, 8443}
 
 	ctx := context.Background()

@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Расширенное сканирование с детальной информацией ===\n")
+	fmt.Println("=== Расширенное сканирование с детальной информацией ===")
 
 	scanner, err := portscan.New(
 		portscan.WithConcurrency(50),
@@ -19,14 +19,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func(scanner *portscan.Scanner) {
-		err := scanner.Close()
-		if err != nil {
-			panic(err)
+	defer func() {
+		if err := scanner.Close(); err != nil {
+			log.Printf("Error closing scanner: %v", err)
 		}
-	}(scanner)
+	}()
 
-	// Парсим порты
 	ports, err := portscan.ParsePorts(
 		"22,80,443",
 		"8000-8100",
@@ -35,7 +33,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Сканируем несколько хостов
 	hosts := []string{
 		"localhost",
 		"google.com",
@@ -53,22 +50,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Собираем результаты
 	var allResults []portscan.Result
 	for result := range results {
 		allResults = append(allResults, result)
 	}
 
-	// Статистика
 	stats := portscan.Stats(allResults)
 	stats.TotalDuration = time.Since(startTime)
 
 	fmt.Printf("📊 Статистика:\n%s\n\n", stats)
 
-	// Детальные результаты
 	fmt.Println("📋 Детальные результаты:")
 
-	// Группируем по хостам
 	grouped := portscan.GroupByHost(allResults)
 	for host, results := range grouped {
 		fmt.Printf("\n🌐 %s:\n", host)

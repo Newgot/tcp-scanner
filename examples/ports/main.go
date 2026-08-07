@@ -9,49 +9,52 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Различные способы указания портов ===\n")
+	fmt.Println("=== Различные способы указания портов ===")
+	fmt.Println()
 
 	scanner, err := portscan.New()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func(scanner *portscan.Scanner) {
-		err := scanner.Close()
-		if err != nil {
-			panic(err)
+	defer func() {
+		if err := scanner.Close(); err != nil {
+			log.Printf("Error closing scanner: %v", err)
 		}
-	}(scanner)
+	}()
 
-	// Способ 1: Использование Range
 	fmt.Println("1. Использование Range():")
 	ports1 := portscan.Range(1, 10)
-	fmt.Printf("   Порты: %v\n\n", ports1)
+	fmt.Printf("   Порты: %v\n", ports1)
+	fmt.Println()
 
-	// Способ 2: Использование Ports
 	fmt.Println("2. Использование Ports():")
 	ports2 := portscan.Ports(80, 443, 8080, 99999, 8443, 80)
-	fmt.Printf("   Порты: %v (невалидные и дубликаты отфильтрованы)\n\n", ports2)
+	fmt.Printf("   Порты: %v (невалидные и дубликаты отфильтрованы)\n", ports2)
+	fmt.Println()
 
-	// Способ 3: Использование ParsePorts
 	fmt.Println("3. Использование ParsePorts():")
-	ports3, _ := portscan.ParsePorts(
-		"22,80,443", // список
-		"8000-8010", // диапазон
-		"9000-9020", // другой диапазон
+	ports3, err := portscan.ParsePorts(
+		"22,80,443",
+		"8000-8010",
+		"9000-9020",
 	)
-	fmt.Printf("   Порты: %v\n\n", ports3)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("   Порты: %v\n", ports3)
+	fmt.Println()
 
-	// Способ 4: Обратный диапазон
 	fmt.Println("4. Обратный диапазон (1000-1):")
 	ports4 := portscan.Range(1000, 1)
-	fmt.Printf("   Порты: %d портов (от 1 до 1000)\n\n", len(ports4))
+	fmt.Printf("   Порты: %d портов (от 1 до 1000)\n", len(ports4))
+	fmt.Println()
 
-	// Способ 5: Объединение списков
 	fmt.Println("5. Объединение списков:")
 	merged := portscan.MergePorts(ports1, ports2, ports3)
-	fmt.Printf("   Всего уникальных портов: %d\n\n", len(merged))
+	fmt.Printf("   Всего уникальных портов: %d\n", len(merged))
+	fmt.Println()
 
-	// Тестирование с различными сценариями
+	fmt.Println("6. Тестирование валидации:")
 	testCases := []struct {
 		name  string
 		ports []int
@@ -63,7 +66,6 @@ func main() {
 		{"Пустой список", []int{}},
 	}
 
-	fmt.Println("6. Тестирование валидации:")
 	for _, tc := range testCases {
 		fmt.Printf("\n   %s: %v\n", tc.name, tc.ports)
 		err := portscan.ValidatePorts(tc.ports)
@@ -73,10 +75,13 @@ func main() {
 			fmt.Printf("   ✅ Валидно\n")
 		}
 	}
+	fmt.Println()
 
-	// Сканирование с комбинированными портами
-	fmt.Println("\n7. Сканирование с комбинированными портами:")
-	allPorts, _ := portscan.ParsePorts("22,80,443", "8000-8005")
+	fmt.Println("7. Сканирование с комбинированными портами:")
+	allPorts, err := portscan.ParsePorts("22,80,443", "8000-8005")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx := context.Background()
 	results, err := scanner.Scan(ctx, []string{"localhost"}, allPorts)
@@ -94,4 +99,5 @@ func main() {
 			fmt.Printf("      ...\n")
 		}
 	}
+	fmt.Printf("\n   Всего получено результатов: %d\n", count)
 }
