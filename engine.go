@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/Newgot/tcp-scanner/internal/dialer"
 )
@@ -69,6 +70,14 @@ func (s *Scanner) Scan(ctx context.Context, hosts []string, ports []int) (<-chan
 		return nil, err
 	}
 
+	// Создаем карту для отслеживания исходных хостов по IP
+	hostMap := make(map[string]string)
+	for _, info := range hostsInfo {
+		for _, addr := range info.Addresses {
+			hostMap[addr] = info.Original
+		}
+	}
+
 	// Получаем уникальные IP-адреса для сканирования
 	addresses := GetUniqueAddresses(hostsInfo)
 	if len(addresses) == 0 {
@@ -93,7 +102,12 @@ func (s *Scanner) Scan(ctx context.Context, hosts []string, ports []int) (<-chan
 				case <-ctx.Done():
 					return
 				default:
-					result := s.scanPort(ctx, task.host, task.port)
+					// Получаем исходное имя хоста
+					hostName := hostMap[task.host]
+					if hostName == "" {
+						hostName = task.host
+					}
+					result := s.scanPort(ctx, hostName, task.host, task.port)
 					select {
 					case results <- result:
 					case <-ctx.Done():
@@ -144,24 +158,30 @@ func (s *Scanner) ScanAll(ctx context.Context, hosts []string, ports []int) ([]R
 }
 
 // scanPort сканирует один порт
-func (s *Scanner) scanPort(ctx context.Context, host string, port int) Result {
+func (s *Scanner) scanPort(ctx context.Context, hostName, ipAddr string, port int) Result {
+	start := time.Now()
+
 	// Проверяем, не отменен ли контекст
 	select {
 	case <-ctx.Done():
 		return Result{
-			Host:  host,
-			Port:  port,
-			State: StateCanceled,
-			Error: ctx.Err(),
+			Host:     hostName,
+			IP:       net.ParseIP(ipAddr),
+			Port:     uint16(port),
+			State:    StateCanceled,
+			Duration: time.Since(start),
+			Error:    ctx.Err(),
 		}
 	default:
 	}
 
-	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	addr := net.JoinHostPort(ipAddr, strconv.Itoa(port))
 	conn, err := s.dialer.DialContext(ctx, "tcp", addr)
 
+	duration := time.Since(start)
+
 	if err != nil {
-		return s.classifyError(host, port, err)
+		return s.classifyError(hostName, ipAddr, port, duration, err)
 	}
 	defer func(conn net.Conn) {
 		err := conn.Close()
@@ -171,34 +191,39 @@ func (s *Scanner) scanPort(ctx context.Context, host string, port int) Result {
 	}(conn)
 
 	return Result{
-		Host:  host,
-		Port:  port,
-		State: StateOpen,
+		Host:     hostName,
+		IP:       net.ParseIP(ipAddr),
+		Port:     uint16(port),
+		State:    StateOpen,
+		Duration: duration,
 	}
 }
 
 // classifyError классифицирует ошибку без сравнения текста
-func (s *Scanner) classifyError(host string, port int, err error) Result {
+func (s *Scanner) classifyError(hostName, ipAddr string, port int, duration time.Duration, err error) Result {
 	// Проверяем отмену контекста
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return Result{
-			Host:  host,
-			Port:  port,
-			State: StateCanceled,
-			Error: err,
+			Host:     hostName,
+			IP:       net.ParseIP(ipAddr),
+			Port:     uint16(port),
+			State:    StateCanceled,
+			Duration: duration,
+			Error:    err,
 		}
 	}
 
 	// Проверяем сетевые ошибки
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		// Таймаут
 		if netErr.Timeout() {
 			return Result{
-				Host:  host,
-				Port:  port,
-				State: StateTimeout,
-				Error: err,
+				Host:     hostName,
+				IP:       net.ParseIP(ipAddr),
+				Port:     uint16(port),
+				State:    StateTimeout,
+				Duration: duration,
+				Error:    err,
 			}
 		}
 	}
@@ -206,66 +231,61 @@ func (s *Scanner) classifyError(host string, port int, err error) Result {
 	// Проверяем ошибки syscall
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
-		// Проверяем ошибки соединения
 		if opErr.Op == "dial" {
-			// Проверяем системные ошибки
 			if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
 				switch sysErr.Err {
-				case syscall.ECONNREFUSED:
+				case syscall.ECONNREFUSED, syscall.ECONNRESET:
 					return Result{
-						Host:  host,
-						Port:  port,
-						State: StateClosed,
-						Error: err,
+						Host:     hostName,
+						IP:       net.ParseIP(ipAddr),
+						Port:     uint16(port),
+						State:    StateClosed,
+						Duration: duration,
+						Error:    err,
 					}
-				case syscall.ENETUNREACH:
+				case syscall.ENETUNREACH, syscall.EHOSTUNREACH:
 					return Result{
-						Host:  host,
-						Port:  port,
-						State: StateUnreachable,
-						Error: err,
-					}
-				case syscall.EHOSTUNREACH:
-					return Result{
-						Host:  host,
-						Port:  port,
-						State: StateUnreachable,
-						Error: err,
-					}
-				case syscall.ECONNRESET:
-					return Result{
-						Host:  host,
-						Port:  port,
-						State: StateClosed,
-						Error: err,
+						Host:     hostName,
+						IP:       net.ParseIP(ipAddr),
+						Port:     uint16(port),
+						State:    StateUnreachable,
+						Duration: duration,
+						Error:    err,
 					}
 				case syscall.ETIMEDOUT:
 					return Result{
-						Host:  host,
-						Port:  port,
-						State: StateTimeout,
-						Error: err,
+						Host:     hostName,
+						IP:       net.ParseIP(ipAddr),
+						Port:     uint16(port),
+						State:    StateTimeout,
+						Duration: duration,
+						Error:    err,
 					}
 				}
 			}
 		}
 
 		// Проверяем ошибки DNS
-		if dnsErr, ok := opErr.Err.(*net.DNSError); ok {
+		var dnsErr *net.DNSError
+		if errors.As(opErr.Err, &dnsErr) {
 			if dnsErr.IsNotFound {
 				return Result{
-					Host:  host,
-					Port:  port,
-					State: StateUnreachable,
-					Error: err,
+					Host:     hostName,
+					IP:       nil,
+					Port:     uint16(port),
+					State:    StateUnreachable,
+					Duration: duration,
+					Error:    err,
 				}
 			}
 			if dnsErr.IsTimeout {
 				return Result{
-					Host:  host,
-					Port:  port,
-					State: StateTimeout,
-					Error: err,
+					Host:     hostName,
+					IP:       nil,
+					Port:     uint16(port),
+					State:    StateTimeout,
+					Duration: duration,
+					Error:    err,
 				}
 			}
 		}
@@ -273,10 +293,12 @@ func (s *Scanner) classifyError(host string, port int, err error) Result {
 
 	// Если ошибка не классифицирована, возвращаем как error
 	return Result{
-		Host:  host,
-		Port:  port,
-		State: StateError,
-		Error: err,
+		Host:     hostName,
+		IP:       net.ParseIP(ipAddr),
+		Port:     uint16(port),
+		State:    StateError,
+		Duration: duration,
+		Error:    err,
 	}
 }
 

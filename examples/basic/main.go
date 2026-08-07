@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Базовое сканирование портов ===")
+	fmt.Println("=== Базовое сканирование портов ===\n")
 
 	// Создаем сканер с настройками по умолчанию
 	scanner, err := portscan.New()
@@ -23,7 +23,7 @@ func main() {
 		}
 	}(scanner)
 
-	// Сканируем популярные порты на localhost
+	// Сканируем популярные порты
 	ports := []int{22, 80, 443, 3306, 5432, 6379, 8080, 8443}
 
 	ctx := context.Background()
@@ -32,12 +32,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("\nРезультаты сканирования:")
+	fmt.Println("Результаты сканирования:")
 	for result := range results {
 		if result.IsOpen() {
-			fmt.Printf("✅ %s - ОТКРЫТ\n", result)
+			fmt.Printf("✅ %s - ОТКРЫТ (IP: %s, %v)\n",
+				result, result.IP, result.Duration)
 		} else {
-			fmt.Printf("❌ %s\n", result)
+			fmt.Printf("❌ %s (IP: %s, %v)\n",
+				result, result.IP, result.Duration)
 		}
 	}
 }

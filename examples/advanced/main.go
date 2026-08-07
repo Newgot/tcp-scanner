@@ -10,12 +10,11 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Расширенное сканирование портов ===")
+	fmt.Println("=== Расширенное сканирование с детальной информацией ===\n")
 
-	// Создаем сканер с пользовательскими настройками
 	scanner, err := portscan.New(
-		portscan.WithConcurrency(50),                      // 50 одновременных проверок
-		portscan.WithConnectTimeout(200*time.Millisecond), // 200мс таймаут
+		portscan.WithConcurrency(50),
+		portscan.WithConnectTimeout(200*time.Millisecond),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -27,11 +26,10 @@ func main() {
 		}
 	}(scanner)
 
-	// Парсим сложную спецификацию портов
+	// Парсим порты
 	ports, err := portscan.ParsePorts(
-		"22,80,443", // отдельные порты
-		"8000-8100", // диапазон
-		"9000-9100", // другой диапазон
+		"22,80,443",
+		"8000-8100",
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -40,15 +38,16 @@ func main() {
 	// Сканируем несколько хостов
 	hosts := []string{
 		"localhost",
-		"127.0.0.1",
-		"::1",
+		"google.com",
+		"github.com",
 	}
 
-	fmt.Printf("\nСканируем %d портов на %d хостах...\n", len(ports), len(hosts))
+	fmt.Printf("Сканируем %d портов на %d хостах...\n\n", len(ports), len(hosts))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	startTime := time.Now()
 	results, err := scanner.Scan(ctx, hosts, ports)
 	if err != nil {
 		log.Fatal(err)
@@ -62,23 +61,48 @@ func main() {
 
 	// Статистика
 	stats := portscan.Stats(allResults)
-	fmt.Printf("\n📊 Статистика:\n%s\n", stats)
+	stats.TotalDuration = time.Since(startTime)
 
-	// Только открытые порты
-	openPorts := portscan.OpenPorts(allResults)
-	if len(openPorts) > 0 {
-		fmt.Println("\n✅ Открытые порты:")
-		for _, r := range openPorts {
-			fmt.Printf("  %s\n", r)
-		}
-	} else {
-		fmt.Println("\n❌ Открытых портов не найдено")
-	}
+	fmt.Printf("📊 Статистика:\n%s\n\n", stats)
 
-	// Группировка по хостам
+	// Детальные результаты
+	fmt.Println("📋 Детальные результаты:")
+
+	// Группируем по хостам
 	grouped := portscan.GroupByHost(allResults)
-	fmt.Println("\n📋 Результаты по хостам:")
 	for host, results := range grouped {
-		fmt.Printf("\n  %s: %d портов\n", host, len(results))
+		fmt.Printf("\n🌐 %s:\n", host)
+
+		var openPorts []portscan.Result
+		var closedPorts []portscan.Result
+
+		for _, r := range results {
+			if r.IsOpen() {
+				openPorts = append(openPorts, r)
+			} else {
+				closedPorts = append(closedPorts, r)
+			}
+		}
+
+		if len(openPorts) > 0 {
+			fmt.Printf("   ✅ Открытые порты:\n")
+			for _, r := range openPorts {
+				fmt.Printf("      %d (IP: %s, %v) [%v]\n",
+					r.Port, r.IP, r.State, r.Duration)
+			}
+		}
+
+		if len(closedPorts) > 0 {
+			fmt.Printf("   ❌ Закрытые/ошибочные порты:\n")
+			for _, r := range closedPorts {
+				if r.Error != nil {
+					fmt.Printf("      %d: %s (IP: %s, %v) [%v]\n",
+						r.Port, r.State, r.IP, r.Duration, r.Error)
+				} else {
+					fmt.Printf("      %d: %s (IP: %s, %v)\n",
+						r.Port, r.State, r.IP, r.Duration)
+				}
+			}
+		}
 	}
 }
