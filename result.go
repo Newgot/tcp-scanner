@@ -2,7 +2,6 @@ package portscan
 
 import (
 	"fmt"
-	"strings"
 )
 
 // State представляет состояние порта
@@ -10,18 +9,21 @@ type State string
 
 // Состояния портов
 const (
-	StateOpen     State = "open"     // порт открыт
-	StateClosed   State = "closed"   // порт закрыт
-	StateFiltered State = "filtered" // порт фильтруется (таймаут)
-	StateError    State = "error"    // произошла ошибка
+	StateOpen        State = "open"        // TCP-соединение установлено
+	StateClosed      State = "closed"      // Соединение явно отклонено
+	StateTimeout     State = "timeout"     // Подключение не завершилось за время
+	StateUnreachable State = "unreachable" // Узел или сеть недоступны
+	StateFiltered    State = "filtered"    // Порт фильтруется (таймаут)
+	StateCanceled    State = "canceled"    // Проверка отменена
+	StateError       State = "error"       // Произошла другая ошибка
 )
 
 // Result представляет результат сканирования одного порта
 type Result struct {
 	Host  string // хост
-	Port  int    // номер порта
-	State State  // состояние порта
-	Error error  // детали ошибки (если State == StateError)
+	Port  int    // Номер порта
+	State State  // Состояние порта
+	Error error  // Детали ошибки (если есть)
 }
 
 // String возвращает строковое представление результата
@@ -42,9 +44,19 @@ func (r Result) IsClosed() bool {
 	return r.State == StateClosed
 }
 
-// IsFiltered проверяет, фильтруется ли порт
-func (r Result) IsFiltered() bool {
-	return r.State == StateFiltered
+// IsTimeout проверяет, истекло ли время ожидания
+func (r Result) IsTimeout() bool {
+	return r.State == StateTimeout
+}
+
+// IsUnreachable проверяет, недоступен ли узел
+func (r Result) IsUnreachable() bool {
+	return r.State == StateUnreachable
+}
+
+// IsCanceled проверяет, отменена ли проверка
+func (r Result) IsCanceled() bool {
+	return r.State == StateCanceled
 }
 
 // IsError проверяет, произошла ли ошибка
@@ -59,11 +71,11 @@ func (r Result) Success() bool {
 
 // ResultStats содержит статистику сканирования
 type ResultStats struct {
-	Total    int // общее количество
-	Open     int // открытые порты
-	Closed   int // закрытые порты
-	Filtered int // фильтруемые порты
-	Errors   int // ошибки
+	Total    int // Общее количество
+	Open     int // Открытые порты
+	Closed   int // Закрытые порты
+	Filtered int // Фильтруемые порты
+	Errors   int // Ошибки
 }
 
 // Stats собирает статистику из результатов
@@ -103,17 +115,6 @@ func OpenPorts(results []Result) []Result {
 	return open
 }
 
-// ClosedPorts возвращает список закрытых портов
-func ClosedPorts(results []Result) []Result {
-	var closed []Result
-	for _, r := range results {
-		if r.IsClosed() {
-			closed = append(closed, r)
-		}
-	}
-	return closed
-}
-
 // GroupByHost группирует результаты по хостам
 func GroupByHost(results []Result) map[string][]Result {
 	groups := make(map[string][]Result)
@@ -121,14 +122,4 @@ func GroupByHost(results []Result) map[string][]Result {
 		groups[r.Host] = append(groups[r.Host], r)
 	}
 	return groups
-}
-
-// FormatResults форматирует результаты в читаемый вид
-func FormatResults(results []Result) string {
-	var sb strings.Builder
-	for _, r := range results {
-		sb.WriteString(r.String())
-		sb.WriteByte('\n')
-	}
-	return sb.String()
 }

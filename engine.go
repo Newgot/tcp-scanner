@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
-	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/Newgot/tcp-scanner/internal/dialer"
 )
@@ -58,10 +59,8 @@ func (s *Scanner) Scan(ctx context.Context, hosts []string, ports []int) (<-chan
 	}
 
 	// Валидация портов
-	for _, p := range ports {
-		if p < 1 || p > 65535 {
-			return nil, fmt.Errorf("%w: %d", ErrInvalidPort, p)
-		}
+	if err := ValidatePorts(ports); err != nil {
+		return nil, err
 	}
 
 	// Разрешаем хосты
@@ -146,11 +145,23 @@ func (s *Scanner) ScanAll(ctx context.Context, hosts []string, ports []int) ([]R
 
 // scanPort сканирует один порт
 func (s *Scanner) scanPort(ctx context.Context, host string, port int) Result {
+	// Проверяем, не отменен ли контекст
+	select {
+	case <-ctx.Done():
+		return Result{
+			Host:  host,
+			Port:  port,
+			State: StateCanceled,
+			Error: ctx.Err(),
+		}
+	default:
+	}
+
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := s.dialer.DialContext(ctx, "tcp", addr)
 
 	if err != nil {
-		return s.handleScanError(host, port, err)
+		return s.classifyError(host, port, err)
 	}
 	defer func(conn net.Conn) {
 		err := conn.Close()
@@ -166,32 +177,101 @@ func (s *Scanner) scanPort(ctx context.Context, host string, port int) Result {
 	}
 }
 
-// handleScanError обрабатывает ошибки сканирования
-func (s *Scanner) handleScanError(host string, port int, err error) Result {
+// classifyError классифицирует ошибку без сравнения текста
+func (s *Scanner) classifyError(host string, port int, err error) Result {
+	// Проверяем отмену контекста
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return Result{
+			Host:  host,
+			Port:  port,
+			State: StateCanceled,
+			Error: err,
+		}
+	}
+
+	// Проверяем сетевые ошибки
 	var netErr net.Error
 	if errors.As(err, &netErr) {
+		// Таймаут
 		if netErr.Timeout() {
 			return Result{
 				Host:  host,
 				Port:  port,
-				State: StateFiltered,
+				State: StateTimeout,
 				Error: err,
 			}
 		}
 	}
 
-	errStr := err.Error()
-	if strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "no route to hosts") ||
-		strings.Contains(errStr, "connection reset") {
-		return Result{
-			Host:  host,
-			Port:  port,
-			State: StateClosed,
-			Error: err,
+	// Проверяем ошибки syscall
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		// Проверяем ошибки соединения
+		if opErr.Op == "dial" {
+			// Проверяем системные ошибки
+			if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
+				switch sysErr.Err {
+				case syscall.ECONNREFUSED:
+					return Result{
+						Host:  host,
+						Port:  port,
+						State: StateClosed,
+						Error: err,
+					}
+				case syscall.ENETUNREACH:
+					return Result{
+						Host:  host,
+						Port:  port,
+						State: StateUnreachable,
+						Error: err,
+					}
+				case syscall.EHOSTUNREACH:
+					return Result{
+						Host:  host,
+						Port:  port,
+						State: StateUnreachable,
+						Error: err,
+					}
+				case syscall.ECONNRESET:
+					return Result{
+						Host:  host,
+						Port:  port,
+						State: StateClosed,
+						Error: err,
+					}
+				case syscall.ETIMEDOUT:
+					return Result{
+						Host:  host,
+						Port:  port,
+						State: StateTimeout,
+						Error: err,
+					}
+				}
+			}
+		}
+
+		// Проверяем ошибки DNS
+		if dnsErr, ok := opErr.Err.(*net.DNSError); ok {
+			if dnsErr.IsNotFound {
+				return Result{
+					Host:  host,
+					Port:  port,
+					State: StateUnreachable,
+					Error: err,
+				}
+			}
+			if dnsErr.IsTimeout {
+				return Result{
+					Host:  host,
+					Port:  port,
+					State: StateTimeout,
+					Error: err,
+				}
+			}
 		}
 	}
 
+	// Если ошибка не классифицирована, возвращаем как error
 	return Result{
 		Host:  host,
 		Port:  port,
