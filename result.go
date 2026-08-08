@@ -1,6 +1,8 @@
+// result.go - добавляем недостающую десериализацию
 package portscan
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"time"
@@ -22,12 +24,100 @@ const (
 
 // Result представляет результат сканирования одного порта
 type Result struct {
-	Host     string        // Исходное имя хоста (DNS имя или IP)
-	IP       net.IP        // IP-адрес, к которому было выполнено подключение
-	Port     uint16        // Номер порта (1-65535)
-	State    State         // Состояние порта
-	Duration time.Duration // Время выполнения проверки
-	Error    error         // Детали ошибки (если есть)
+	Host     string        `json:"host"`
+	IP       net.IP        `json:"ip"`
+	Port     uint16        `json:"port"`
+	State    State         `json:"state"`
+	Duration time.Duration `json:"duration"`
+	Error    error         `json:"-"`
+}
+
+// MarshalJSON для Result
+func (r Result) MarshalJSON() ([]byte, error) {
+	type Alias Result
+	return json.Marshal(&struct {
+		Duration string `json:"duration"`
+		ErrorMsg string `json:"error,omitempty"`
+		*Alias
+	}{
+		Duration: r.Duration.String(),
+		ErrorMsg: func() string {
+			if r.Error != nil {
+				return r.Error.Error()
+			}
+			return ""
+		}(),
+		Alias: (*Alias)(&r),
+	})
+}
+
+// UnmarshalJSON для Result
+func (r *Result) UnmarshalJSON(data []byte) error {
+	type Alias Result
+	aux := &struct {
+		Duration string `json:"duration"`
+		ErrorMsg string `json:"error,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.Duration != "" {
+		if d, err := time.ParseDuration(aux.Duration); err == nil {
+			r.Duration = d
+		}
+	}
+	if aux.ErrorMsg != "" {
+		r.Error = fmt.Errorf("%s", aux.ErrorMsg)
+	}
+	return nil
+}
+
+// ResultStats содержит статистику сканирования
+type ResultStats struct {
+	Total         int           `json:"total"`
+	Open          int           `json:"open"`
+	Closed        int           `json:"closed"`
+	Filtered      int           `json:"filtered"`
+	Timeout       int           `json:"timeout"`
+	Unreachable   int           `json:"unreachable"`
+	Canceled      int           `json:"canceled"`
+	Errors        int           `json:"errors"`
+	TotalDuration time.Duration `json:"total_duration"`
+}
+
+// MarshalJSON для ResultStats
+func (s ResultStats) MarshalJSON() ([]byte, error) {
+	type Alias ResultStats
+	return json.Marshal(&struct {
+		TotalDuration string `json:"total_duration"`
+		*Alias
+	}{
+		TotalDuration: s.TotalDuration.String(),
+		Alias:         (*Alias)(&s),
+	})
+}
+
+// UnmarshalJSON для ResultStats
+func (s *ResultStats) UnmarshalJSON(data []byte) error {
+	type Alias ResultStats
+	aux := &struct {
+		TotalDuration string `json:"total_duration"`
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.TotalDuration != "" {
+		if d, err := time.ParseDuration(aux.TotalDuration); err == nil {
+			s.TotalDuration = d
+		}
+	}
+	return nil
 }
 
 // String возвращает строковое представление результата
@@ -83,19 +173,6 @@ func (r Result) IsError() bool {
 // Success возвращает true, если сканирование прошло успешно (порт открыт или закрыт)
 func (r Result) Success() bool {
 	return r.State == StateOpen || r.State == StateClosed
-}
-
-// ResultStats содержит статистику сканирования
-type ResultStats struct {
-	Total         int           // Общее количество
-	Open          int           // Открытые порты
-	Closed        int           // Закрытые порты
-	Filtered      int           // Фильтруемые порты
-	Timeout       int           // Таймауты
-	Unreachable   int           // Недоступные узлы
-	Canceled      int           // Отмененные проверки
-	Errors        int           // Ошибки
-	TotalDuration time.Duration // Общее время сканирования
 }
 
 // Stats собирает статистику из результатов

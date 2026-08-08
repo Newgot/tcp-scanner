@@ -6,7 +6,6 @@ import (
 )
 
 // Task представляет функцию, которую должен выполнить воркер.
-// Возвращает ошибку, если выполнение завершилось неудачей.
 type Task func(ctx context.Context) error
 
 // Pool управляет пулом воркеров для параллельного выполнения задач.
@@ -17,6 +16,8 @@ type Pool struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	once         sync.Once
+	mu           sync.RWMutex
+	stopped      bool
 }
 
 // NewPool создает новый пул с указанным количеством воркеров.
@@ -24,9 +25,10 @@ func NewPool(ctx context.Context, workers int) *Pool {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Pool{
 		workersCount: workers,
-		taskQueue:    make(chan Task, workers*2), // буферизированный канал
+		taskQueue:    make(chan Task, workers*2),
 		ctx:          ctx,
 		cancel:       cancel,
+		stopped:      false,
 	}
 }
 
@@ -46,19 +48,25 @@ func (p *Pool) worker() {
 	for {
 		select {
 		case <-p.ctx.Done():
-			return // завершаем работу при отмене контекста
+			return
 		case task, ok := <-p.taskQueue:
 			if !ok {
-				return // канал задач закрыт
+				return
 			}
-			// Выполняем задачу с контекстом пула
-			_ = task(p.ctx) // ошибка может логироваться или обрабатываться отдельно
+			_ = task(p.ctx)
 		}
 	}
 }
 
-// Submit отправляет задачу в пул. Блокируется, если очередь заполнена.
+// Submit отправляет задачу в пул.
 func (p *Pool) Submit(task Task) error {
+	p.mu.RLock()
+	if p.stopped {
+		p.mu.RUnlock()
+		return context.Canceled
+	}
+	p.mu.RUnlock()
+
 	select {
 	case <-p.ctx.Done():
 		return p.ctx.Err()
@@ -67,9 +75,17 @@ func (p *Pool) Submit(task Task) error {
 	}
 }
 
-// Stop останавливает пул: закрывает канал задач и ожидает завершения воркеров.
+// Stop останавливает пул.
 func (p *Pool) Stop() {
-	p.cancel()         // сигнал всем воркерам остановиться
-	close(p.taskQueue) // закрываем канал задач
-	p.wg.Wait()        // ожидаем завершения всех воркеров
+	p.mu.Lock()
+	if p.stopped {
+		p.mu.Unlock()
+		return
+	}
+	p.stopped = true
+	p.mu.Unlock()
+
+	p.cancel()
+	close(p.taskQueue)
+	p.wg.Wait()
 }
